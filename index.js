@@ -1,4 +1,4 @@
-var Stream = require('stream');
+var Readable = require('stream').Readable;
 var inherits = require('inherits');
 var spawn = require('child_process').spawn;
 
@@ -9,50 +9,59 @@ module.exports = function (opts, fn) {
     }
     if (!opts) opts = {};
     var b = new B (opts);
-    if (typeof fn === 'function') b.push(fn);
+    if (typeof fn === 'function') b.pushFunction(fn);
     return b;
 };
 
 function B (opts) {
     var self = this;
-    Stream.call(self);
+    Readable.call(self);
     
-    self.readable = true;
     self.size = opts.size || 2048;
-    self.rate = opts.rate || 44000;
+    self.rate = opts.rate || 44100;
     
     self.channels = [];
     self.t = 0;
     self.i = 0;
-    
-    process.nextTick(function () {
-        if (self.paused) {
-            self.on('resume', self.loop.bind(self));
-        }
-        else self.loop();
-    });
+
+    self.paused = false;
+    self.buf = [];
+    setImmediate(self.loop.bind(self));
+    // process.nextTick(function () {
+    //     if (self.paused) {
+    //         self.on('resume', self.loop.bind(self));
+    //     }
+    //     else self.loop();
+    // });
 }
 
-inherits(B, Stream);
-
-B.prototype.end = function () {
-    this.ended = true;
+inherits(B, Readable);
+B.prototype._read = function(n) {
+  var self = this;
+  if (self.paused) {
+    self.paused = false;
+    self.loop();
+  }
 };
 
-B.prototype.destroy = function () {
-    this.destroyed = true;
-    this.emit('end');
-};
+// B.prototype.end = function () {
+//     this.ended = true;
+// };
 
-B.prototype.pause = function () {
-    this.paused = true;
-};
+// B.prototype.destroy = function () {
+//     this.destroyed = true;
+//     this.emit('end');
+// };
 
-B.prototype.resume = function () {
-    if (!this.paused) return;
-    this.paused = false;
-    this.emit('resume');
-};
+// B.prototype.pause = function () {
+//     this.paused = true;
+// };
+
+// B.prototype.resume = function () {
+//     if (!this.paused) return;
+//     this.paused = false;
+//     this.emit('resume');
+// };
 
 B.prototype.addChannel = function (type, fn) {
     if (typeof type === 'function') {
@@ -62,7 +71,7 @@ B.prototype.addChannel = function (type, fn) {
     this.channels.push([ type, [ fn ].filter(Boolean) ]);
 };
 
-B.prototype.push = function (ix, fn) {
+B.prototype.pushFunction = function (ix, fn) {
     if (typeof ix === 'function') {
         fn = ix;
         ix = 0;
@@ -77,21 +86,26 @@ B.prototype.loop = function () {
     var self = this;
     
     var buf = self.tick();
+    if (self.push(buf)) {
+        setImmediate(self.loop.bind(self));
+    } else {
+        self.paused = true;
+    }
     
-    if (self.destroyed) {
-        // no more events
-    }
-    else if (self.paused) {
-        self.once('resume', function () {
-            self.emit('data', buf);
-            process.nextTick(self.loop.bind(self));
-        });
-    }
-    else {
-        self.emit('data', buf);
-        if (self.ended) self.emit('end');
-        else process.nextTick(self.loop.bind(self));
-    }
+    // if (self.destroyed) {
+    //     // no more events
+    // }
+    // else if (self.paused) {
+    //     self.once('resume', function () {
+    //         self.emit('data', buf);
+    //         process.nextTick(self.loop.bind(self));
+    //     });
+    // }
+    // else {
+    //     self.emit('data', buf);
+    //     if (self.ended) self.emit('end');
+    //     else process.nextTick(self.loop.bind(self));
+    // }
 };
 
 B.prototype.tick = function () {
@@ -124,7 +138,6 @@ B.prototype.tick = function () {
             if (isNaN(x)) x = 0;
             value = x;
         }
-        
         buf.writeInt16LE(clamp(value), i);
     }
     
